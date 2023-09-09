@@ -13,47 +13,11 @@
 - Option to skip frames for space-saving purposes
 - Outputs a compressed binary file ready for decoding across various platforms
 
-## MVB Format Description
-
-### File Structure
-
-The MVB (Micro Video Binary) file is a custom format designed for video storage and playback. This section explains the structure and specifications of the MVB file format.
-
-The key idea behind the encoding process is to divide each frame into square chunks. Each chunk from the current frame is then compared to its counterpart in the previous frame, and only the chunks that have changed are saved.
-
----
-
-### Header Structure
-
-The binary file starts with a 16-byte header, organized as follows:
-
-- **[4 bytes] - Magic Number**: A unique signature, `0x2e4d5642`, is used to validate that the correct file type is being decoded.
-- **[2 bytes] - Frames Count**: This UInt16 little-endian value indicates the total number of frames present in the video.
-- **[2 bytes] - Chunk Dimension**: Specifies the dimension of each square chunk as a UInt16 little-endian value.
-- **[2 bytes] - Frame Width**: Specifies the width of each frame as a UInt16 little-endian value.
-- **[2 bytes] - Frame Height**: Specifies the height of each frame as a UInt16 little-endian value.
-- **[2 bytes] - Target FPS**: A UInt16 little-endian value representing the target frames-per-second rate.
-- **[2 bytes] - Skip Frames**: A UInt16 little-endian value indicating the number of frames to skip during encoding.
-
-### Frame Chunks
-
-Right after the header, the file contains a sequence of frame chunks. Each frame chunk starts with:
-
-- **[2 bytes] - Chunk Data Size**: A UInt16 little-endian value indicating the size of the compressed data for that frame's chunks. This data immediately follows the size value. Zlib is used in a "no header" mode to compress the frame data. If no chunks have changed relative to the previous frame, this entire frame chunk comprises just a 2-byte value set to zero.
-
-### Chunk Data
-
-Each chunk within the frame data sequence includes:
-
-- **[1 byte] - X Position**: A UInt8 value indicating the x-coordinate of the chunk.
-- **[1 byte] - Y Position**: A UInt8 value indicating the y-coordinate of the chunk.
-- **[chunkSize * chunkSize * 2 bytes] - Pixels Data**: This is a sequence of 2-byte RGB565 values, each representing a pixel in the chunk. The pixel data is organized in row-major order.
-
 ## Prerequisites
 
 - macOS 11.0+
 - Swift 5.x
-- FFmpeg v4.0+ installed (e.g., available through Homebrew)
+- FFmpeg 4.0+ installed (e.g., available through Homebrew)
 
 ## Installation
 
@@ -79,8 +43,8 @@ video2mvb --input /path/to/input.mp4 --output /path/to/output.mvb
 ### Options
 |  Option    | Description                                    | Default      |
 |  --------  | ---------------------------------------------- | ------------ |
-| `--input`  | Path to the input video file                   |              |
-| `--output` | Path to the output MVB file                    |              |
+| `--input`  | Path to the input video file                   |  -           |
+| `--output` | Path to the output MVB file                    |  -           |
 | `--cs`     | Chunk size (dimension of a square chunk)       |  40 pixels   |
 | `--width`  | Target frame width                             |  160 pixels  |
 | `--height` | Target frame height                            |  80 pixels   |
@@ -100,6 +64,73 @@ To convert a video with custom parameters:
 ```bash
 video2mvb -i example.mp4 -o example.mvb --cs 32 --width 128 --height 128 --fps 20
 ```
+
+# MVB Format Structure
+
+The MVB (Micro Video Binary) file is a custom format designed for video storage and playback. This section explains the structure and specifications of the MVB file format.
+
+The key idea behind the encoding process is to divide each frame into square chunks. Each chunk from the current frame is then compared to its counterpart in the previous frame, and only the chunks that have changed are saved.
+
+## Header section
+
+The MVB file starts with a header that's 16 bytes long. All these parameters are stored as little-endian values.
+
+| Field          | Size (bytes) |  Type  | Description                                                     |
+|----------------|--------------|--------|-----------------------------------------------------------------|
+| Magic Number   |  4           | UInt32 | Unique signature: `0x2e4d5642`, used to validate the file type. |
+| Frames Count   |  2           | UInt16 | Total number of frames in the video.                            |
+| Chunk Dimension|  2           | UInt16 | Dimension of each square chunk.                                 |
+| Frame Width    |  2           | UInt16 | Width of a video frame.                                         |
+| Frame Height   |  2           | UInt16 | Height of a video frame.                                        |
+| Target FPS     |  2           | UInt16 | Target frames per second rate.                                  |
+| Skip Frames    |  2           | UInt16 | Number of frames to skip during encoding.                       |
+
+
+## Data Section
+
+Right after the header comes the Data Section. This section is composed of a sequence of Frame Containers, each containing information for a single frame, laid out one after another. Below is a detailed description of its structure and components:
+
+### Frame Container
+
+A Frame Container starts with a 2-byte UInt16 little-endian value representing the size in bytes of the compressed data that follows.
+
+| Field                | Size (bytes)               | Type   | Description                                                                         |
+|----------------------|----------------------------|--------|-------------------------------------------------------------------------------------|
+| Frame Data Size      | 2                          | UInt16 | Size in bytes of the compressed data for that frame container. Stored as little-endian. |
+| Compressed Frame Data| Variable (Defined by Size) | Bytes  | Zlib-compressed data containing individual Chunks.                                  |
+
+**Note:**  
+- If no chunks have changed relative to the previous frame, the Frame Data Size value is zero, and the total length of the Frame Container is just 2 bytes.
+- Zlib is used in "no header" mode with `wbits` set to -15 for compression.
+
+### Chunk
+
+After decompressing the Frame Data, it consists of a sequence of Chunks:
+
+| Field           | Size (bytes)                  | Type  | Description                     |
+|-----------------|-------------------------------|-------|---------------------------------|
+| X Position      | 1                             | UInt8 | X-coordinate of the chunk.      |
+| Y Position      | 1                             | UInt8 | Y-coordinate of the chunk.      |
+| Pixels Data     | Pixels count * Color depth    | Bytes | Fixed-size pixels data.         |
+
+**Note:**
+- The size of each Pixels Data region is equal to  `chunkSize * chunkSize * 2` for RGB565.
+- Pixel data within each Chunk is organized in row-major order.
+
+## The Actual Encoding Process
+
+This section describes how video frames get converted and stored in the MVB format.
+
+### Steps
+| # |     Step      |      Description     |
+|---|---------------|----------------------|
+| 1 | Initialization | Video properties like frame dimensions, chunk dimensions, FPS, etc., should be predetermined and will be stored in the header. |
+| 2 | Frame Preparation | The video frames are divided into square chunks based on predetermined chunk dimensions. |
+| 3 | Frame Comparison | For each frame, its chunks are compared with those of the previous frame. Only chunks that have changed are processed further. |
+| 4 | Data Compression | Changed chunks are then compressed using Zlib in "no header" mode with wbits set to -15. |
+| 5 | Frame Container Creation | A Frame Container is created for each frame. It starts with a Frame Data Size field that describes the size of the compressed data. The compressed data for the chunks that have changed are then stored in the Frame Container under Compressed Frame Data. |
+| 6 | Appending to Data Section | Each Frame Container is then sequentially added to the Data Section of the MVB file. |
+| 7 | Finalization | Once all frames have been processed, the header is updated with the final count of frames and prepended at the start of the MVB file. |
 
 ## License
 
